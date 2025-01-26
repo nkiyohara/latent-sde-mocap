@@ -1,0 +1,22 @@
+[project]
+name = "latent-sde-mocap"
+version = "0.0.1"
+description = "PyTorch implementation of Latent SDE for motion capture data generation, based on Li et al.'s AISTATS 2020 paper"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Naoki Kiyohara" }
+]
+keywords = ["deep-learning", "motion-capture", "sde", "pytorch"]
+dependencies = [
+    "beartype>=0.19.0",
+    "fire>=0.7.0",
+    "jaxtyping>=0.2.36",
+    "loguru>=0.7.3",
+    "numpy>=2.2.2",
+    "scipy>=1.15.1",
+    "torch>=2.5.1",
+    "torchsde>=0.2.6",
+    "tqdm>=4.67.1",
+    "wandb>=0.19.4",
+]
