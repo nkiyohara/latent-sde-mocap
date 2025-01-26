@@ -1,6 +1,6 @@
 # Latent SDE MoCap Reproduction Attempt
 
-This repository contains code to attempt reproducing the motion capture experiments from [Li et al.'s work on Scalable Gradients for SDEs](https://arxiv.org/abs/2001.01328). The implementation is based on the [torchsde Lorenz attractor example](https://github.com/google-research/torchsde/blob/master/examples/latent_sde_lorenz.py), modified to work with motion capture data and incorporating architectural improvements from [Yıldız et al.'s work](https://arxiv.org/abs/1905.10994) on "Deep generative second order ODEs with Bayesian neural networks".
+This repository contains code to attempt reproducing the motion capture experiments from [Li et al.'s work on Scalable Gradients for SDEs](https://arxiv.org/abs/2001.01328). The implementation is based on the [torchsde](https://github.com/google-research/torchsde) Lorenz attractor example, modified to work with motion capture data and incorporating architectural improvements from [Yıldız et al.'s ODE²VAE work](https://github.com/cagatayyildiz/ODE2VAE) on "Deep generative second order ODEs with Bayesian neural networks".
 
 **Current Status**: While we've implemented the architecture and training procedure, our Test MSE (~9.0) has not yet reached the performance reported in the original paper (~4.0). Work is ongoing to improve the results.
 
@@ -17,13 +17,13 @@ The experiment uses preprocessed motion capture data from the CMU Graphics Lab M
 
 - Preprocessed dataset: `mocap35.mat` (walking sequence)
 - Original source: [CMU MoCap Database](http://mocap.cs.cmu.edu/)
-- Preprocessed data available at: [Google Drive Dataset](https://drive.google.com/drive/folders/1c0UMSqlvZRORmCNN_qVdiqu2n8sKcwnh)
+- Preprocessed data available at: [Google Drive Dataset](https://drive.google.com/drive/folders/1c0UMSqlvZRORmCNN_qVdiqu2n8sKcwnh) (provided by the authors of [ODE²VAE](https://github.com/cagatayyildiz/ODE2VAE))
 
 ## Setup
 
 1. Download the preprocessed dataset `mocap35.mat`
 2. Place the file in the same directory as the code
-3. Ensure you have uv installed
+3. Ensure you have [`uv`](https://docs.astral.sh/uv/) installed
 
 ## Running the Experiment
 
@@ -45,7 +45,7 @@ uv run latent_sde.py
 
 ## License
 
-This code is based on Google LLC's torchsde Lorenz attractor example, which is licensed under the Apache License 2.0. The original code has been modified by Naoki Kiyohara to:
+This code is based on Google LLC's [torchsde](https://github.com/google-research/torchsde) Lorenz attractor example, which is licensed under the Apache License 2.0. The original code has been modified to:
 - Use Motion Capture dataset as training target
 - Implement architecture from "Scalable Gradients for Stochastic Differential Equations" (Li et al., AISTATS 2020)
 - Add Weights & Biases logging and model checkpointing
@@ -79,7 +79,7 @@ For the Latent SDE model and motion capture experiments ([paper link](https://ar
 }
 ```
 
-For the dataset preprocessing and ODE²VAE model ([paper link](https://arxiv.org/abs/1905.10994)):
+For the dataset preprocessing and ODE²VAE model ([paper link](https://arxiv.org/abs/1905.10994), [code](https://github.com/cagatayyildiz/ODE2VAE)):
 ```bibtex
 @inproceedings{yildiz2019ode2vae,
     title     = {ODE2VAE: Deep generative second order ODEs with Bayesian neural networks},
