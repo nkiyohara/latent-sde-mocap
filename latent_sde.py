@@ -15,7 +15,7 @@
 # Modifications Copyright 2025 Naoki Kiyohara
 # Modified from the original latent SDE Lorenz attractor example (in torchsde) to:
 # - Use Motion Capture dataset as training target
-# - Implement architecture from "Scalable Gradients for Stochastic Differential 
+# - Implement architecture from "Scalable Gradients for Stochastic Differential
 #   Equations" (Li et al., AISTATS 2020)
 # - Add Weights & Biases logging and model checkpointing
 
@@ -96,7 +96,9 @@ def load_mocap_data_many_walks(
 @jaxtyped(typechecker=beartype)
 def create_sliding_windows_single_sequence(
     X_seq: Float[np.ndarray, "L D"], t_seq: Float[np.ndarray, "L"], window_size: int
-) -> tuple[Float[np.ndarray, "T window_size D"], Float[np.ndarray, "T"], Int[np.ndarray, "T"]]:
+) -> tuple[
+    Float[np.ndarray, "T window_size D"], Float[np.ndarray, "T"], Int[np.ndarray, "T"]
+]:
     """
     Creates sliding windows of size `window_size` for a single sequence (walk).
     """
@@ -133,7 +135,9 @@ def make_dataset(
     for seq_idx in range(X_raw.shape[0]):
         X_seq = X_raw[seq_idx]
         t_seq = t_raw[seq_idx]
-        windows, t_windows, _ = create_sliding_windows_single_sequence(X_seq, t_seq, window_size)
+        windows, t_windows, _ = create_sliding_windows_single_sequence(
+            X_seq, t_seq, window_size
+        )
         all_windows.append(windows)
     all_windows = np.stack(all_windows).transpose(1, 0, 2, 3)
     all_windows = torch.Tensor(all_windows).to(device)
@@ -169,20 +173,34 @@ class Encoder(nn.Module):
 
     def forward(
         self, inp: Float[torch.Tensor, "T B 3 50"]
-    ) -> tuple[Float[torch.Tensor, "T B 6"], Float[torch.Tensor, "T B 6"], Float[torch.Tensor, "T B 3"]]:
-        qz0_mean, qz0_logstd, context = torch.split(self.net(inp), split_size_or_sections=[6, 6, 3], dim=-1)
+    ) -> tuple[
+        Float[torch.Tensor, "T B 6"],
+        Float[torch.Tensor, "T B 6"],
+        Float[torch.Tensor, "T B 3"],
+    ]:
+        qz0_mean, qz0_logstd, context = torch.split(
+            self.net(inp), split_size_or_sections=[6, 6, 3], dim=-1
+        )
         return qz0_mean, qz0_logstd, context
 
 
 class Decoder(nn.Module):
     def __init__(self):
         super(Decoder, self).__init__()
-        self.net = nn.Sequential(nn.Linear(6, 30), nn.Softplus(), nn.Linear(30, 30), nn.Softplus(), nn.Linear(30, 100))
+        self.net = nn.Sequential(
+            nn.Linear(6, 30),
+            nn.Softplus(),
+            nn.Linear(30, 30),
+            nn.Softplus(),
+            nn.Linear(30, 100),
+        )
 
     def forward(
         self, inp: Float[torch.Tensor, "T B 6"]
     ) -> tuple[Float[torch.Tensor, "T B 50"], Float[torch.Tensor, "T B 50"]]:
-        px_mean, px_logstd = torch.split(self.net(inp), split_size_or_sections=[50, 50], dim=-1)
+        px_mean, px_logstd = torch.split(
+            self.net(inp), split_size_or_sections=[50, 50], dim=-1
+        )
         return px_mean, px_logstd
 
 
@@ -198,13 +216,21 @@ class LatentSDE(nn.Module):
         self.encoder = Encoder()
         self.decoder = Decoder()
 
-        self.f_net = nn.Sequential(nn.Linear(latent_size + 1 + context_size, 30), nn.Softplus(), nn.Linear(30, 6))
-        self.h_net = nn.Sequential(nn.Linear(latent_size + 1, 30), nn.Softplus(), nn.Linear(30, 6))
+        self.f_net = nn.Sequential(
+            nn.Linear(latent_size + 1 + context_size, 30),
+            nn.Softplus(),
+            nn.Linear(30, 6),
+        )
+        self.h_net = nn.Sequential(
+            nn.Linear(latent_size + 1, 30), nn.Softplus(), nn.Linear(30, 6)
+        )
 
         # This needs to be an element-wise function for the SDE to satisfy diagonal noise.
         self.g_nets = nn.ModuleList(
             [
-                nn.Sequential(nn.Linear(2, 30), nn.Softplus(), nn.Linear(30, 1), nn.Sigmoid())
+                nn.Sequential(
+                    nn.Linear(2, 30), nn.Softplus(), nn.Linear(30, 1), nn.Sigmoid()
+                )
                 for _ in range(latent_size)
             ]
         )
@@ -214,11 +240,15 @@ class LatentSDE(nn.Module):
 
         self._ctx = None
 
-    def contextualize(self, ctx: tuple[Float[torch.Tensor, "T"], Float[torch.Tensor, "T B 3"]]):
+    def contextualize(
+        self, ctx: tuple[Float[torch.Tensor, "T"], Float[torch.Tensor, "T B 3"]]
+    ):
         self._ctx = ctx  # A tuple of tensors of sizes (T,), (T, batch_size, d).
 
     def f(self, t, y):
-        ts, ctx = self._ctx if self._ctx is not None else (None, None)  # Handle None case
+        ts, ctx = (
+            self._ctx if self._ctx is not None else (None, None)
+        )  # Handle None case
         if ts is None or ctx is None:
             raise ValueError("Context not set. Call contextualize() first.")
 
@@ -235,11 +265,19 @@ class LatentSDE(nn.Module):
         batch_size = y.shape[0]
         y = torch.split(y, split_size_or_sections=1, dim=1)
         t = t.expand(batch_size, 1)  # Expand t to match batch size of y
-        out = [g_net_i(torch.cat((t, y_i), dim=1)) for (g_net_i, y_i) in zip(self.g_nets, y)]
+        out = [
+            g_net_i(torch.cat((t, y_i), dim=1))
+            for (g_net_i, y_i) in zip(self.g_nets, y)
+        ]
         return torch.cat(out, dim=1)
 
     def forward(
-        self, xs: Float[torch.Tensor, "T B 150"], ts: Float[torch.Tensor, "T"], adjoint=False, method="euler", dt=0.02
+        self,
+        xs: Float[torch.Tensor, "T B 150"],
+        ts: Float[torch.Tensor, "T"],
+        adjoint=False,
+        method="euler",
+        dt=0.02,
     ):
         # Contextualization is only needed for posterior inference.
         qz0_mean, qz0_logstd, ctx = self.encoder(torch.flip(xs, dims=(0,)))
@@ -248,9 +286,9 @@ class LatentSDE(nn.Module):
         self.contextualize((ts, ctx))
 
         # Use self.clamp_range instead of hardcoded 6.0
-        z0 = qz0_mean + torch.exp(torch.clamp(qz0_logstd, -self.clamp_range, self.clamp_range)) * torch.randn_like(
-            qz0_mean
-        )
+        z0 = qz0_mean + torch.exp(
+            torch.clamp(qz0_logstd, -self.clamp_range, self.clamp_range)
+        ) * torch.randn_like(qz0_mean)
 
         if adjoint:
             # Must use the argument `adjoint_params`, since `ctx` is not part of the input to `f`, `g`, and `h`.
@@ -261,22 +299,41 @@ class LatentSDE(nn.Module):
                 + tuple(self.h_net.parameters())
             )
             zs, log_ratio = torchsde.sdeint_adjoint(
-                self, z0, ts, adjoint_params=adjoint_params, dt=dt, logqp=True, method=method
+                self,
+                z0,
+                ts,
+                adjoint_params=adjoint_params,
+                dt=dt,
+                logqp=True,
+                method=method,
             )
         else:
-            zs, log_ratio = torchsde.sdeint(self, z0, ts, dt=dt, logqp=True, method=method)
+            zs, log_ratio = torchsde.sdeint(
+                self, z0, ts, dt=dt, logqp=True, method=method
+            )
 
         _xs_mean, _xs_logstd = self.decoder(zs)
         # Use self.clamp_range instead of hardcoded 6.0
-        xs_dist = Normal(loc=_xs_mean, scale=torch.exp(torch.clamp(_xs_logstd, -self.clamp_range, self.clamp_range)))
+        xs_dist = Normal(
+            loc=_xs_mean,
+            scale=torch.exp(
+                torch.clamp(_xs_logstd, -self.clamp_range, self.clamp_range)
+            ),
+        )
         log_pxs = xs_dist.log_prob(xs[:, :, -1, :]).sum(dim=(0, 2)).mean(dim=0)
 
         # Use self.clamp_range instead of hardcoded 6.0
         qz0 = torch.distributions.Normal(
-            loc=qz0_mean, scale=torch.exp(torch.clamp(qz0_logstd, -self.clamp_range, self.clamp_range))
+            loc=qz0_mean,
+            scale=torch.exp(
+                torch.clamp(qz0_logstd, -self.clamp_range, self.clamp_range)
+            ),
         )
         pz0 = torch.distributions.Normal(
-            loc=self.pz0_mean, scale=torch.exp(torch.clamp(self.pz0_logstd, -self.clamp_range, self.clamp_range))
+            loc=self.pz0_mean,
+            scale=torch.exp(
+                torch.clamp(self.pz0_logstd, -self.clamp_range, self.clamp_range)
+            ),
         )
         logqp0 = torch.distributions.kl_divergence(qz0, pz0).sum(dim=1).mean(dim=0)
         logqp_path = log_ratio.sum(dim=0).mean(dim=0)
@@ -284,9 +341,17 @@ class LatentSDE(nn.Module):
 
     @torch.no_grad()
     def sample(self, batch_size, ts, bm=None, dt=0.02):
-        eps = torch.randn(size=(batch_size, *self.pz0_mean.shape[1:]), device=self.pz0_mean.device)
+        eps = torch.randn(
+            size=(batch_size, *self.pz0_mean.shape[1:]), device=self.pz0_mean.device
+        )
         # Use self.clamp_range instead of hardcoded 6.0
-        z0 = self.pz0_mean + torch.exp(torch.clamp(self.pz0_logstd, -self.clamp_range, self.clamp_range)) * eps
+        z0 = (
+            self.pz0_mean
+            + torch.exp(
+                torch.clamp(self.pz0_logstd, -self.clamp_range, self.clamp_range)
+            )
+            * eps
+        )
         zs = torchsde.sdeint(self, z0, ts, names={"drift": "h"}, dt=dt, bm=bm)
         # Most of the times in ML, we don't sample the observation noise for visualization purposes.
         _xs_mean, _ = self.decoder(zs)
@@ -300,9 +365,9 @@ class LatentSDE(nn.Module):
         self.contextualize((ts, ctx))
 
         # Use self.clamp_range instead of hardcoded 6.0
-        z0 = qz0_mean + torch.exp(torch.clamp(qz0_logstd, -self.clamp_range, self.clamp_range)) * torch.randn_like(
-            qz0_mean
-        )
+        z0 = qz0_mean + torch.exp(
+            torch.clamp(qz0_logstd, -self.clamp_range, self.clamp_range)
+        ) * torch.randn_like(qz0_mean)
         zs = torchsde.sdeint(self, z0, ts, names={"drift": "h"}, dt=dt, bm=bm)
         _xs_mean, _ = self.decoder(zs)
         return _xs_mean
@@ -316,8 +381,12 @@ class LatentSDE(nn.Module):
     def mean_mse(self, xs, ts, num_samples=50, bm=None):
         seq_len, batch_size, window_size, dim = xs.shape
         # Reshape inputs to (seq_len, num_samples * batch_size, dim)
-        inputs = xs.repeat(1, num_samples, 1, 1).view(seq_len, num_samples * batch_size, window_size, dim)
-        trajs = self.sample_from_posterior(inputs, ts, bm).view(seq_len, num_samples, batch_size, dim)
+        inputs = xs.repeat(1, num_samples, 1, 1).view(
+            seq_len, num_samples * batch_size, window_size, dim
+        )
+        trajs = self.sample_from_posterior(inputs, ts, bm).view(
+            seq_len, num_samples, batch_size, dim
+        )
         traj_mean = torch.mean(trajs, dim=1)
         return torch.mean((traj_mean - xs[:, :, -1]) ** 2)
 
@@ -329,7 +398,7 @@ def main(
     kl_anneal_iters=200,
     kl_max_coeff=1.0,
     pause_every=50,
-    save_every=1000,
+    save_every=50,
     checkpoint_dir="checkpoints",
     adjoint=False,
     mocap_data_path="./mocap35.mat",
@@ -344,7 +413,7 @@ def main(
     set_seed(seed)
 
     # Initialize wandb
-    run = wandb.init(
+    _ = wandb.init(
         project=wandb_project,
         entity=wandb_entity,
         config={
@@ -357,7 +426,7 @@ def main(
             "method": method,
             "grad_clip": grad_clip,
             "seed": seed,
-        }
+        },
     )
 
     # Create checkpoint directory if it doesn't exist
@@ -391,7 +460,9 @@ def main(
 
     latent_sde = LatentSDE().to(device)
     optimizer = optim.Adam(params=latent_sde.parameters(), lr=lr_init)
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=lr_gamma)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        optimizer=optimizer, gamma=lr_gamma
+    )
     kl_scheduler = LinearScheduler(iters=kl_anneal_iters, maxval=kl_max_coeff)
 
     for global_step in tqdm.tqdm(range(1, num_iters + 1)):
@@ -405,13 +476,16 @@ def main(
         kl_scheduler.step()
 
         # Log metrics every step
-        wandb.log({
-            "loss": loss.item(),
-            "log_pxs": log_pxs.item(),
-            "log_ratio": log_ratio.item(),
-            "kl_coeff": kl_scheduler.val,
-            "learning_rate": optimizer.param_groups[0]["lr"],
-        }, step=global_step)
+        wandb.log(
+            {
+                "loss": loss.item(),
+                "log_pxs": log_pxs.item(),
+                "log_ratio": log_ratio.item(),
+                "kl_coeff": kl_scheduler.val,
+                "learning_rate": optimizer.param_groups[0]["lr"],
+            },
+            step=global_step,
+        )
 
         if global_step % pause_every == 0:
             lr_now = optimizer.param_groups[0]["lr"]
@@ -421,7 +495,9 @@ def main(
 
             # Calculate validation loss
             with torch.no_grad():
-                val_log_pxs, val_log_ratio = latent_sde(xs_val, ts_val, method=method, adjoint=adjoint)
+                val_log_pxs, val_log_ratio = latent_sde(
+                    xs_val, ts_val, method=method, adjoint=adjoint
+                )
                 val_loss = -val_log_pxs + val_log_ratio * kl_scheduler.val
                 logger.info(f"Validation loss: {val_loss:.4f}")
 
@@ -429,32 +505,41 @@ def main(
             mse_train = latent_sde.mse(xs, ts)
             mse_val = latent_sde.mse(xs_val, ts_val)
             mse_test = latent_sde.mse(xs_test, ts_test)
-            logger.info(f"MSE train: {mse_train:.4f}, val: {mse_val:.4f}, test: {mse_test:.4f}")
+            logger.info(
+                f"MSE train: {mse_train:.4f}, val: {mse_val:.4f}, test: {mse_test:.4f}"
+            )
 
             mean_mse_train = latent_sde.mean_mse(xs, ts)
             mean_mse_val = latent_sde.mean_mse(xs_val, ts_val)
             mean_mse_test = latent_sde.mean_mse(xs_test, ts_test)
-            logger.info(f"Mean MSE train: {mean_mse_train:.4f}, val: {mean_mse_val:.4f}, test: {mean_mse_test:.4f}")
+            logger.info(
+                f"Mean MSE train: {mean_mse_train:.4f}, val: {mean_mse_val:.4f}, test: {mean_mse_test:.4f}"
+            )
 
             # Log evaluation metrics
-            wandb.log({
-                "loss/train": loss.item(),
-                "loss/val": val_loss.item(),
-                "log_pxs/train": log_pxs.item(),
-                "log_pxs/val": val_log_pxs.item(),
-                "log_ratio/train": log_ratio.item(),
-                "log_ratio/val": val_log_ratio.item(),
-                "mse/train": mse_train,
-                "mse/val": mse_val,
-                "mse/test": mse_test,
-                "mean_mse/train": mean_mse_train,
-                "mean_mse/val": mean_mse_val,
-                "mean_mse/test": mean_mse_test,
-            }, step=global_step)
+            wandb.log(
+                {
+                    "loss/train": loss.item(),
+                    "loss/val": val_loss.item(),
+                    "log_pxs/train": log_pxs.item(),
+                    "log_pxs/val": val_log_pxs.item(),
+                    "log_ratio/train": log_ratio.item(),
+                    "log_ratio/val": val_log_ratio.item(),
+                    "mse/train": mse_train,
+                    "mse/val": mse_val,
+                    "mse/test": mse_test,
+                    "mean_mse/train": mean_mse_train,
+                    "mean_mse/val": mean_mse_val,
+                    "mean_mse/test": mean_mse_test,
+                },
+                step=global_step,
+            )
 
         # Save checkpoint
         if global_step % save_every == 0:
-            checkpoint_path = os.path.join(checkpoint_dir, f"model_step_{global_step:06d}.pt")
+            checkpoint_path = os.path.join(
+                checkpoint_dir, f"model_step_{global_step:06d}.pt"
+            )
             checkpoint = {
                 "model_state_dict": latent_sde.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
