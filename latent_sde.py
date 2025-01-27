@@ -205,11 +205,11 @@ class Decoder(nn.Module):
 
 
 class LatentSDE(nn.Module):
-    sde_type = "ito"
     noise_type = "diagonal"
 
-    def __init__(self):
+    def __init__(self, sde_type="ito"):
         super(LatentSDE, self).__init__()
+        self.sde_type = sde_type
         self.clamp_range = 9.0
         latent_size = 6
         context_size = 3
@@ -402,6 +402,7 @@ def main(
     checkpoint_dir="checkpoints",
     adjoint=False,
     mocap_data_path="./mocap35.mat",
+    sde_type="ito",
     method="euler",
     grad_clip=0.5,
     seed=42,
@@ -426,6 +427,7 @@ def main(
             "method": method,
             "grad_clip": grad_clip,
             "seed": seed,
+            "sde_type": sde_type,
         },
     )
 
@@ -453,12 +455,13 @@ def main(
     logger.info(f"Gradient clip value: {grad_clip}")
     logger.info(f"Random seed: {seed}")
     logger.info(f"Device: {device}")
+    logger.info(f"SDE type: {sde_type}")
 
     xs, ts = make_dataset(mocap_data_path, "train", device)
     xs_val, ts_val = make_dataset(mocap_data_path, "val", device)
     xs_test, ts_test = make_dataset(mocap_data_path, "test", device)
 
-    latent_sde = LatentSDE().to(device)
+    latent_sde = LatentSDE(sde_type=sde_type).to(device)
     optimizer = optim.Adam(params=latent_sde.parameters(), lr=lr_init)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(
         optimizer=optimizer, gamma=lr_gamma
