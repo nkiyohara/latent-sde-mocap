@@ -117,7 +117,7 @@ class ODEGRU(nn.Module):
                 t_span = torch.tensor(
                     [reversed_t[i], reversed_t[i + 1]], device=x.device
                 )
-                h = odeint(self.drift, h, t_span, method="dopri5")[-1]
+                h = odeint(self.drift, h, t_span, method="rk4")[-1]
             hidden_states.append(h)
 
         return torch.flip(torch.stack(hidden_states), dims=[0])
@@ -337,16 +337,17 @@ def main(
     seed: int = 42,
     num_iters: int = 5000,
     lr_init: float = 1e-2,
-    lr_gamma: float = 0.999,
+    lr_decay_rate: float = 0.9,
+    lr_decay_every: int = 500,
     kl_anneal_iters: int = 500,
     kl_max_coeff: float = 1.0,
     pause_every: int = 50,
     save_every: int = 50,
-    checkpoint_dir: str = "checkpoints",
+    checkpoint_dir: str = "mocap2_checkpoints",
     adjoint: bool = False,
     mocap_data_path: str = "./mocap35.mat",
     sde_type: str = "ito",
-    sde_method: str = "srk",
+    sde_method: str = "euler",
     sde_dt: float = 0.05,
     data_dt: float = 0.1,
     grad_clip: float = 0.5,
@@ -384,7 +385,7 @@ def main(
     # Initialize model
     model = LatentSDE(sde_type=sde_type).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr_init)
-    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=lr_gamma)
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=lr_decay_rate)
     kl_scheduler = LinearScheduler(kl_anneal_iters, kl_max_coeff)
 
     # Training loop
@@ -404,8 +405,10 @@ def main(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
-        scheduler.step()
         kl_scheduler.step()
+
+        if step % lr_decay_every == 0:
+            scheduler.step()
 
         # Logging
         if step % pause_every == 0:
