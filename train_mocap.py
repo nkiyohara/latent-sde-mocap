@@ -24,6 +24,7 @@ from typing import Literal, Union
 
 import fire
 import numpy as np
+import time
 import torch
 import torchsde
 import tqdm
@@ -33,6 +34,7 @@ from loguru import logger
 from scipy.io import loadmat
 from torch import nn, optim
 from torch.distributions import Normal
+from torch.utils.flop_counter import FlopCounterMode  # Official FLOPs counter for PyTorch ≥1.13
 import wandb
 
 
@@ -378,7 +380,7 @@ class LatentSDE(nn.Module):
         return torch.mean((xs[:, :, -1] - xs_mean) ** 2)
 
     @torch.no_grad()
-    def mean_mse(self, xs, ts, num_samples=50, bm=None):
+    def mean_mse(self, xs, ts, num_samples=100, bm=None):
         seq_len, batch_size, window_size, dim = xs.shape
         # Reshape inputs to (seq_len, num_samples * batch_size, dim)
         inputs = xs.repeat(1, num_samples, 1, 1).view(
@@ -389,6 +391,48 @@ class LatentSDE(nn.Module):
         )
         traj_mean = torch.mean(trajs, dim=1)
         return torch.mean((traj_mean - xs[:, :, -1]) ** 2)
+
+
+@torch.no_grad()
+def benchmark_sampling(model: LatentSDE,
+                       ts: torch.Tensor,
+                       device: torch.device,
+                       batch_size: int = 100,
+                       repeats: int = 10):
+    """Measurement: Sampling time (mean±std) and FLOPs"""
+    # --------- Time measurement ---------
+    times = []
+    for _ in range(repeats):
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        t0 = time.time()
+        _ = model.sample(batch_size=batch_size, ts=ts)   # Single sampling
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        times.append(time.time() - t0)
+    times = np.asarray(times)
+    mean_ms = times.mean() * 1e3
+    std_ms  = times.std()  * 1e3
+
+    # --------- FLOPs measurement ---------
+    flop_counter = FlopCounterMode(display=False)
+    with flop_counter:
+        _ = model.sample(batch_size=batch_size, ts=ts)
+    total_flops = flop_counter.get_total_flops()         # 64bit int
+    gflops = total_flops / 1e9
+
+    # --------- Log output ---------
+    logger.info(f"[Benchmark] sample(bs={batch_size}) "
+                f"{mean_ms:.2f} ± {std_ms:.2f} ms, {gflops:.2f} GFLOPs")
+
+    wandb.log(
+        {
+            "bench/sample_ms_mean": mean_ms,
+            "bench/sample_ms_std":  std_ms,
+            "bench/sample_flops":   total_flops,
+        },
+        commit=False,  # When you want to record with training step
+    )
 
 
 def main(
@@ -467,6 +511,9 @@ def main(
         optimizer=optimizer, gamma=lr_gamma
     )
     kl_scheduler = LinearScheduler(iters=kl_anneal_iters, maxval=kl_max_coeff)
+
+    # Run benchmark before training
+    benchmark_sampling(latent_sde, ts, device)
 
     for global_step in tqdm.tqdm(range(1, num_iters + 1)):
         latent_sde.zero_grad()
