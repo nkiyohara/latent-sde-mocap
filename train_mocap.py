@@ -24,6 +24,7 @@ from typing import Literal, Union
 
 import fire
 import numpy as np
+import time
 import torch
 import torchsde
 import tqdm
@@ -33,7 +34,9 @@ from loguru import logger
 from scipy.io import loadmat
 from torch import nn, optim
 from torch.distributions import Normal
+from torch.utils.flop_counter import FlopCounterMode  # Official FLOPs counter for PyTorch ≥1.13
 import wandb
+# torch.autograd.set_detect_anomaly(True)
 
 
 def set_seed(seed: int):
@@ -46,10 +49,10 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     # For reproducible operations on GPU
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
     # For reproducible operations on CPU
-    torch.use_deterministic_algorithms(True)
+    # torch.use_deterministic_algorithms(True)
 
 
 def load_mocap_data_many_walks(
@@ -210,7 +213,7 @@ class LatentSDE(nn.Module):
     def __init__(self, sde_type="ito"):
         super(LatentSDE, self).__init__()
         self.sde_type = sde_type
-        self.clamp_range = 9.0
+        self.clamp_range = 6.0
         latent_size = 6
         context_size = 3
         self.encoder = Encoder()
@@ -378,7 +381,7 @@ class LatentSDE(nn.Module):
         return torch.mean((xs[:, :, -1] - xs_mean) ** 2)
 
     @torch.no_grad()
-    def mean_mse(self, xs, ts, num_samples=50, bm=None):
+    def mean_mse(self, xs, ts, num_samples=100, bm=None):
         seq_len, batch_size, window_size, dim = xs.shape
         # Reshape inputs to (seq_len, num_samples * batch_size, dim)
         inputs = xs.repeat(1, num_samples, 1, 1).view(
@@ -391,11 +394,53 @@ class LatentSDE(nn.Module):
         return torch.mean((traj_mean - xs[:, :, -1]) ** 2)
 
 
+@torch.no_grad()
+def benchmark_sampling(model: LatentSDE,
+                       ts: torch.Tensor,
+                       device: torch.device,
+                       batch_size: int = 100,
+                       repeats: int = 10):
+    """Measurement: Sampling time (mean±std) and FLOPs"""
+    # --------- Time measurement ---------
+    times = []
+    for _ in range(repeats):
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        t0 = time.time()
+        _ = model.sample(batch_size=batch_size, ts=ts)   # Single sampling
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        times.append(time.time() - t0)
+    times = np.asarray(times)
+    mean_ms = times.mean() * 1e3
+    std_ms  = times.std()  * 1e3
+
+    # --------- FLOPs measurement ---------
+    flop_counter = FlopCounterMode(display=False)
+    with flop_counter:
+        _ = model.sample(batch_size=batch_size, ts=ts)
+    total_flops = flop_counter.get_total_flops()         # 64bit int
+    gflops = total_flops / 1e9
+
+    # --------- Log output ---------
+    logger.info(f"[Benchmark] sample(bs={batch_size}) "
+                f"{mean_ms:.2f} ± {std_ms:.2f} ms, {gflops:.2f} GFLOPs")
+
+    wandb.log(
+        {
+            "bench/sample_ms_mean": mean_ms,
+            "bench/sample_ms_std":  std_ms,
+            "bench/sample_flops":   total_flops,
+        },
+        commit=False,  # When you want to record with training step
+    )
+
+
 def main(
     lr_init=1e-2,
     lr_gamma=0.999,
     num_iters=5000,
-    kl_anneal_iters=200,
+    kl_anneal_iters=400,
     kl_max_coeff=1.0,
     pause_every=50,
     save_every=50,
@@ -458,8 +503,15 @@ def main(
     logger.info(f"SDE type: {sde_type}")
 
     xs, ts = make_dataset(mocap_data_path, "train", device)
+    logger.info(f"xs: {xs.shape}, ts: {ts.shape}")
+    logger.info(f"min(ts): {ts.min()}, max(ts): {ts.max()}")
     xs_val, ts_val = make_dataset(mocap_data_path, "val", device)
+    logger.info(f"xs_val: {xs_val.shape}, ts_val: {ts_val.shape}")
+    logger.info(f"min(ts_val): {ts_val.min()}, max(ts_val): {ts_val.max()}")
     xs_test, ts_test = make_dataset(mocap_data_path, "test", device)
+    logger.info(f"xs_test: {xs_test.shape}, ts_test: {ts_test.shape}")
+    logger.info(f"min(ts_test): {ts_test.min()}, max(ts_test): {ts_test.max()}")
+
 
     latent_sde = LatentSDE(sde_type=sde_type).to(device)
     optimizer = optim.Adam(params=latent_sde.parameters(), lr=lr_init)
@@ -467,6 +519,9 @@ def main(
         optimizer=optimizer, gamma=lr_gamma
     )
     kl_scheduler = LinearScheduler(iters=kl_anneal_iters, maxval=kl_max_coeff)
+
+    # Run benchmark before training
+    benchmark_sampling(latent_sde, ts, device)
 
     for global_step in tqdm.tqdm(range(1, num_iters + 1)):
         latent_sde.zero_grad()
