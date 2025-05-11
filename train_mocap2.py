@@ -346,7 +346,7 @@ def main(
     adjoint: bool = False,
     mocap_data_path: str = "./mocap35.mat",
     sde_type: str = "ito",
-    sde_method: str = "srk",
+    sde_method: str = "euler",
     sde_dt: float = 0.05,
     data_dt: float = 0.1,
     grad_clip: float = 0.5,

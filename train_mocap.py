@@ -36,6 +36,7 @@ from torch import nn, optim
 from torch.distributions import Normal
 from torch.utils.flop_counter import FlopCounterMode  # Official FLOPs counter for PyTorch ≥1.13
 import wandb
+# torch.autograd.set_detect_anomaly(True)
 
 
 def set_seed(seed: int):
@@ -48,10 +49,10 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     # For reproducible operations on GPU
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
     # For reproducible operations on CPU
-    torch.use_deterministic_algorithms(True)
+    # torch.use_deterministic_algorithms(True)
 
 
 def load_mocap_data_many_walks(
@@ -212,7 +213,7 @@ class LatentSDE(nn.Module):
     def __init__(self, sde_type="ito"):
         super(LatentSDE, self).__init__()
         self.sde_type = sde_type
-        self.clamp_range = 9.0
+        self.clamp_range = 6.0
         latent_size = 6
         context_size = 3
         self.encoder = Encoder()
@@ -439,7 +440,7 @@ def main(
     lr_init=1e-2,
     lr_gamma=0.999,
     num_iters=5000,
-    kl_anneal_iters=200,
+    kl_anneal_iters=400,
     kl_max_coeff=1.0,
     pause_every=50,
     save_every=50,
@@ -502,8 +503,15 @@ def main(
     logger.info(f"SDE type: {sde_type}")
 
     xs, ts = make_dataset(mocap_data_path, "train", device)
+    logger.info(f"xs: {xs.shape}, ts: {ts.shape}")
+    logger.info(f"min(ts): {ts.min()}, max(ts): {ts.max()}")
     xs_val, ts_val = make_dataset(mocap_data_path, "val", device)
+    logger.info(f"xs_val: {xs_val.shape}, ts_val: {ts_val.shape}")
+    logger.info(f"min(ts_val): {ts_val.min()}, max(ts_val): {ts_val.max()}")
     xs_test, ts_test = make_dataset(mocap_data_path, "test", device)
+    logger.info(f"xs_test: {xs_test.shape}, ts_test: {ts_test.shape}")
+    logger.info(f"min(ts_test): {ts_test.min()}, max(ts_test): {ts_test.max()}")
+
 
     latent_sde = LatentSDE(sde_type=sde_type).to(device)
     optimizer = optim.Adam(params=latent_sde.parameters(), lr=lr_init)
