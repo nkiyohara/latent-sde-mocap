@@ -117,7 +117,7 @@ class ODEGRU(nn.Module):
                 t_span = torch.tensor(
                     [reversed_t[i], reversed_t[i + 1]], device=x.device
                 )
-                h = odeint(self.drift, h, t_span, method="dopri5")[-1]
+                h = odeint(self.drift, h, t_span, method="rk4")[-1]
             hidden_states.append(h)
 
         return torch.flip(torch.stack(hidden_states), dims=[0])
@@ -337,16 +337,17 @@ def main(
     seed: int = 42,
     num_iters: int = 5000,
     lr_init: float = 1e-2,
-    lr_gamma: float = 0.999,
+    lr_decay_rate: float = 0.9,
+    lr_decay_every: int = 500,
     kl_anneal_iters: int = 500,
     kl_max_coeff: float = 1.0,
     pause_every: int = 50,
     save_every: int = 50,
-    checkpoint_dir: str = "checkpoints",
+    checkpoint_dir: str = "mocap2_checkpoints",
     adjoint: bool = False,
     mocap_data_path: str = "./mocap35.mat",
     sde_type: str = "ito",
-    sde_method: str = "srk",
+    sde_method: str = "euler",
     sde_dt: float = 0.05,
     data_dt: float = 0.1,
     grad_clip: float = 0.5,
@@ -384,7 +385,7 @@ def main(
     # Initialize model
     model = LatentSDE(sde_type=sde_type).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr_init)
-    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=lr_gamma)
+    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=lr_decay_rate)
     kl_scheduler = LinearScheduler(kl_anneal_iters, kl_max_coeff)
 
     # Training loop
@@ -404,8 +405,10 @@ def main(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
-        scheduler.step()
         kl_scheduler.step()
+
+        if step % lr_decay_every == 0:
+            scheduler.step()
 
         # Logging
         if step % pause_every == 0:
@@ -420,15 +423,41 @@ def main(
                 val_loss = -val_log_pxs + val_log_ratio * kl_scheduler.val
 
                 # Testing (only evaluate prediction steps)
-                pred = model.predict(
-                    xs_test_input.permute(1, 0, 2),
+                # Repeat each input 100 times
+                n_repeats = 100
+                batch_size = xs_test_input.shape[0]
+
+                # Repeat inputs: [batch, seq, dim] -> [batch*n_repeats, seq, dim]
+                xs_test_input_repeated = xs_test_input.repeat_interleave(
+                    n_repeats, dim=0
+                )
+
+                # Predict on repeated inputs
+                pred_repeated = model.predict(
+                    xs_test_input_repeated.permute(
+                        1, 0, 2
+                    ),  # [seq, batch*n_repeats, dim]
                     ts_test_input,
                     ts_test_target,
                     method=sde_method,
                     dt=sde_dt,
                 )
-                # Ensure prediction and target dimensions match
-                test_mse = torch.mean((pred - xs_test_target.permute(1, 0, 2)) ** 2)
+
+                # Reshape predictions to [seq, batch, n_repeats, dim]
+                pred_reshaped = pred_repeated.reshape(
+                    pred_repeated.shape[0],
+                    batch_size,
+                    n_repeats,
+                    pred_repeated.shape[2],
+                )
+
+                # Average across repetitions to get mean trajectory: [seq, batch, dim]
+                pred_mean = pred_reshaped.mean(dim=2)
+
+                # Calculate MSE between mean prediction and target
+                test_mse = torch.mean(
+                    (pred_mean - xs_test_target.permute(1, 0, 2)) ** 2
+                )
 
             wandb.log(
                 {
@@ -456,14 +485,32 @@ def main(
 
     # Final evaluation
     with torch.no_grad():
-        pred = model.predict(
-            xs_test_input.permute(1, 0, 2),
+        # Repeat each input 100 times
+        n_repeats = 100
+        batch_size = xs_test_input.shape[0]
+
+        # Repeat inputs: [batch, seq, dim] -> [batch*n_repeats, seq, dim]
+        xs_test_input_repeated = xs_test_input.repeat_interleave(n_repeats, dim=0)
+
+        # Predict on repeated inputs
+        pred_repeated = model.predict(
+            xs_test_input_repeated.permute(1, 0, 2),  # [seq, batch*n_repeats, dim]
             ts_test_input,
             ts_test_target,
             method=sde_method,
             dt=sde_dt,
         )
-        final_mse = torch.mean((pred - xs_test_target.permute(1, 0, 2)) ** 2)
+
+        # Reshape predictions to [seq, batch, n_repeats, dim]
+        pred_reshaped = pred_repeated.reshape(
+            pred_repeated.shape[0], batch_size, n_repeats, pred_repeated.shape[2]
+        )
+
+        # Average across repetitions to get mean trajectory: [seq, batch, dim]
+        pred_mean = pred_reshaped.mean(dim=2)
+
+        # Calculate MSE between mean prediction and target
+        final_mse = torch.mean((pred_mean - xs_test_target.permute(1, 0, 2)) ** 2)
         logger.info(f"Final Test MSE: {final_mse:.4f}")
         wandb.log({"final_test_mse": final_mse})
 
