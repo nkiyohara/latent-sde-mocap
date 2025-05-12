@@ -117,7 +117,7 @@ class ODEGRU(nn.Module):
                 t_span = torch.tensor(
                     [reversed_t[i], reversed_t[i + 1]], device=x.device
                 )
-                h = odeint(self.drift, h, t_span, method="rk4")[-1]
+                h = odeint(self.drift, h, t_span, method="rk4", options={"step_size": 0.05})[-1]
             hidden_states.append(h)
 
         return torch.flip(torch.stack(hidden_states), dims=[0])

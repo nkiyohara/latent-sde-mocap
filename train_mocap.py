@@ -521,7 +521,7 @@ def main(
     kl_scheduler = LinearScheduler(iters=kl_anneal_iters, maxval=kl_max_coeff)
 
     # Run benchmark before training
-    benchmark_sampling(latent_sde, ts, device)
+    # benchmark_sampling(latent_sde, ts, device)
 
     for global_step in tqdm.tqdm(range(1, num_iters + 1)):
         latent_sde.zero_grad()
