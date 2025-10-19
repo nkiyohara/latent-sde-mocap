@@ -436,6 +436,45 @@ def benchmark_sampling(model: LatentSDE,
     )
 
 
+def _count_trainable_params(module: nn.Module) -> int:
+    return sum(p.numel() for p in module.parameters() if p.requires_grad)
+
+
+def log_param_counts(model: LatentSDE):
+    encoder_params = _count_trainable_params(model.encoder)
+    decoder_params = _count_trainable_params(model.decoder)
+    f_params = _count_trainable_params(model.f_net)
+    h_params = _count_trainable_params(model.h_net)
+    g_params_total = sum(_count_trainable_params(m) for m in model.g_nets)
+    total_params = encoder_params + decoder_params + f_params + h_params + g_params_total
+
+    logger.info(
+        "Param counts => encoder: {:,}, decoder: {:,}, f_net: {:,}, g_nets_total: {:,}, h_net: {:,}, total: {:,}".format(
+            encoder_params,
+            decoder_params,
+            f_params,
+            g_params_total,
+            h_params,
+            total_params,
+        )
+    )
+
+    # Write to W&B summary
+    try:
+        wandb.summary.update(
+            {
+                "params/encoder": encoder_params,
+                "params/decoder": decoder_params,
+                "params/f_net": f_params,
+                "params/g_nets_total": g_params_total,
+                "params/h_net": h_params,
+                "params/total": total_params,
+            }
+        )
+    except Exception as e:
+        logger.warning(f"Failed to write param counts to wandb.summary: {e}")
+
+
 def main(
     lr_init=1e-2,
     lr_gamma=0.999,
@@ -514,6 +553,8 @@ def main(
 
 
     latent_sde = LatentSDE(sde_type=sde_type).to(device)
+    # Log parameter counts to logger and wandb summary
+    log_param_counts(latent_sde)
     optimizer = optim.Adam(params=latent_sde.parameters(), lr=lr_init)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(
         optimizer=optimizer, gamma=lr_gamma

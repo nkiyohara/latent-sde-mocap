@@ -72,6 +72,44 @@ class LinearScheduler(object):
         return self._val
 
 
+def _count_trainable_params(module: nn.Module) -> int:
+    return sum(p.numel() for p in module.parameters() if p.requires_grad)
+
+
+def log_param_counts(model: nn.Module):
+    # Model expected to have encoder, decoder, f_net, g_nets, h_net
+    encoder_params = _count_trainable_params(model.encoder)
+    decoder_params = _count_trainable_params(model.decoder)
+    f_params = _count_trainable_params(model.f_net)
+    h_params = _count_trainable_params(model.h_net)
+    g_params_total = sum(_count_trainable_params(m) for m in model.g_nets)
+    total_params = encoder_params + decoder_params + f_params + h_params + g_params_total
+
+    logger.info(
+        "Param counts => encoder: {:,}, decoder: {:,}, f_net: {:,}, g_nets_total: {:,}, h_net: {:,}, total: {:,}".format(
+            encoder_params,
+            decoder_params,
+            f_params,
+            g_params_total,
+            h_params,
+            total_params,
+        )
+    )
+
+    try:
+        wandb.summary.update(
+            {
+                "params/encoder": encoder_params,
+                "params/decoder": decoder_params,
+                "params/f_net": f_params,
+                "params/g_nets_total": g_params_total,
+                "params/h_net": h_params,
+                "params/total": total_params,
+            }
+        )
+    except Exception as e:
+        logger.warning(f"Failed to write param counts to wandb.summary: {e}")
+
 class ODEGRUDrift(nn.Module):
     """Neural ODE drift function for autonomous system."""
 
@@ -117,7 +155,7 @@ class ODEGRU(nn.Module):
                 t_span = torch.tensor(
                     [reversed_t[i], reversed_t[i + 1]], device=x.device
                 )
-                h = odeint(self.drift, h, t_span, method="rk4", options={"step_size": 0.05})[-1]
+                h = odeint(self.drift, h, t_span, method="rk4")[-1]
             hidden_states.append(h)
 
         return torch.flip(torch.stack(hidden_states), dims=[0])
@@ -384,6 +422,8 @@ def main(
 
     # Initialize model
     model = LatentSDE(sde_type=sde_type).to(device)
+    # Log parameter counts to logger and wandb summary
+    log_param_counts(model)
     optimizer = optim.Adam(model.parameters(), lr=lr_init)
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=lr_decay_rate)
     kl_scheduler = LinearScheduler(kl_anneal_iters, kl_max_coeff)
